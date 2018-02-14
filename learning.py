@@ -34,27 +34,29 @@ def train_net(model, params):
     game_state = carmunk.GameState()
 
     # Get initial state by doing nothing and getting the state.
-    _, state = game_state.frame_step((2))
+    _, state = game_state.frame_step([1, 1])
 
     # Let's time it.
     start_time = timeit.default_timer()
 
     # Run the frames.
     while t < train_frames:
-
+         
         t += 1
         car_distance += 1
 
         # Choose an action.
         if random.random() < epsilon or t < observe:
-            action = np.random.randint(0, 3)  # random
+            action = np.random.randint(-1, 2, 2)  # random
+            qval = 0
         else:
             # Get Q values for each action.
             qval = model.predict(state, batch_size=1)
-            action = (np.argmax(qval))  # best
+            action = int(qval*2-1)
 
         # Take action, observe new state and get our treat.
         reward, new_state = game_state.frame_step(action)
+        #print(reward, new_state, action, qval)
 
         # Experience replay storage.
         replay.append((state, action, reward, new_state))
@@ -67,7 +69,7 @@ def train_net(model, params):
                 replay.pop(0)
 
             # Randomly sample our experience replay memory
-            minibatch = random.sample(replay, batchSize)
+            minibatch = replay # random.sample(replay, batchSize)
 
             # Get training values.
             X_train, y_train = process_minibatch2(minibatch, model)
@@ -76,7 +78,7 @@ def train_net(model, params):
             history = LossHistory()
             model.fit(
                 X_train, y_train, batch_size=batchSize,
-                nb_epoch=1, verbose=0, callbacks=[history]
+                epochs=1, verbose=0, callbacks=[history]
             )
             loss_log.append(history.losses)
 
@@ -88,9 +90,9 @@ def train_net(model, params):
             epsilon -= (1.0/train_frames)
 
         # We died, so update stuff.
-        if reward == -500:
+        if reward == -500 or state is None:
             # Log the car's distance at this T.
-            data_collect.append([t, car_distance])
+            data_collect.append([t, reward])
 
             # Update max.
             if car_distance > max_car_distance:
@@ -249,5 +251,5 @@ if __name__ == "__main__":
             "buffer": 50000,
             "nn": nn_param
         }
-        model = neural_net(NUM_INPUT, nn_param)
+        model = neural_net(NUM_INPUT+2, nn_param)
         train_net(model, params)

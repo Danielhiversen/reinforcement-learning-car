@@ -7,7 +7,7 @@ from pygame.color import THECOLORS
 
 import pymunk
 from pymunk.vec2d import Vec2d
-from pymunk.pygame_util import draw
+import pymunk.pygame_util
 
 # PyGame init
 width = 1000
@@ -15,6 +15,8 @@ height = 700
 pygame.init()
 screen = pygame.display.set_mode((width, height))
 clock = pygame.time.Clock()
+space = pymunk.Space()
+draw_options = pymunk.pygame_util.DrawOptions(screen)
 
 # Turn off alpha since we don't use it.
 screen.set_alpha(None)
@@ -29,8 +31,9 @@ class GameState:
         # Global-ish.
         self.crashed = False
 
+        self.goal = [random.randint(1, width), random.randint(1, height)]
         # Physics stuff.
-        self.space = pymunk.Space()
+        self.space = space
         self.space.gravity = pymunk.Vec2d(0., 0.)
 
         # Create the car.
@@ -72,7 +75,7 @@ class GameState:
         self.create_cat()
 
     def create_obstacle(self, x, y, r):
-        c_body = pymunk.Body(pymunk.inf, pymunk.inf)
+        c_body = pymunk.Body(body_type = pymunk.Body.STATIC)
         c_shape = pymunk.Circle(c_body, r)
         c_shape.elasticity = 1.0
         c_body.position = x, y
@@ -95,19 +98,30 @@ class GameState:
         inertia = pymunk.moment_for_circle(1, 0, 14, (0, 0))
         self.car_body = pymunk.Body(1, inertia)
         self.car_body.position = x, y
+        self.car_body.position_start = self.car_body.position
         self.car_shape = pymunk.Circle(self.car_body, 25)
         self.car_shape.color = THECOLORS["green"]
         self.car_shape.elasticity = 1.0
         self.car_body.angle = r
         driving_direction = Vec2d(1, 0).rotated(self.car_body.angle)
-        self.car_body.apply_impulse(driving_direction)
+        self.car_body.apply_impulse_at_local_point(driving_direction)
         self.space.add(self.car_body, self.car_shape)
 
     def frame_step(self, action):
-        if action == 0:  # Turn left.
+        left, right = action
+        speed = 0
+        if left == 1 and right == -1: # Turn left fast.
             self.car_body.angle -= .2
-        elif action == 1:  # Turn right.
+        elif left == 1 and right == 0: # Turn left.
+            self.car_body.angle -= .2
+        elif left == -1 and right == 1: # Turn right fast.
             self.car_body.angle += .2
+        elif left == 0 and right == 1: # Turn right.
+            self.car_body.angle += .2
+        elif left == 1 and right == 1: # forward
+            speed = 1
+        elif left == 0 and right == 1: # backward.
+            speed = -1
 
         # Move obstacles.
         if self.num_steps % 100 == 0:
@@ -118,11 +132,11 @@ class GameState:
             self.move_cat()
 
         driving_direction = Vec2d(1, 0).rotated(self.car_body.angle)
-        self.car_body.velocity = 100 * driving_direction
+        self.car_body.velocity = 100 * driving_direction*speed
 
         # Update the screen and stuff.
         screen.fill(THECOLORS["black"])
-        draw(screen, self.space)
+        space.debug_draw(draw_options)
         self.space.step(1./10)
         if draw_screen:
             pygame.display.flip()
@@ -131,20 +145,24 @@ class GameState:
         # Get the current location and the readings there.
         x, y = self.car_body.position
         readings = self.get_sonar_readings(x, y, self.car_body.angle)
-        normalized_readings = [(x-20.0)/20.0 for x in readings] 
+        normalized_readings = [(r-20.0)/20.0 for r in readings]
+        normalized_readings += [self.goal[0]/width, self.goal[1]/height] 
         state = np.array([normalized_readings])
 
         # Set the reward.
         # Car crashed when any reading == 1
+        reward = (x-self.goal[0])**2+(y-self.goal[1])**2 / (self.car_body.position_start[0]-self.goal[0])**2+(self.car_body.position_start[1]-self.goal[1])**2
+        if left == 0 and right == 0:
+            self.car_body.position = random.randint(1, width), random.randint(1, height)
+            self.car_body.position_start = self.car_body.position
+            self.goal = [random.randint(1, width), random.randint(1, height)]
+            self.recover_from_crash(driving_direction)
+            state = None
         if self.car_is_crashed(readings):
             self.crashed = True
             reward = -500
             self.recover_from_crash(driving_direction)
-        else:
-            # Higher readings are better, so return the sum.
-            reward = -5 + int(self.sum_readings(readings) / 10)
         self.num_steps += 1
-
         return reward, state
 
     def move_obstacles(self):
@@ -176,8 +194,8 @@ class GameState:
             self.crashed = False
             for i in range(10):
                 self.car_body.angle += .2  # Turn a little.
-                screen.fill(THECOLORS["grey7"])  # Red is scary!
-                draw(screen, self.space)
+                screen.fill(THECOLORS["red"])  # Red is scary!
+                space.debug_draw(draw_options)
                 self.space.step(1./10)
                 if draw_screen:
                     pygame.display.flip()
